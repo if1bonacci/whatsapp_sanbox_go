@@ -2,8 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -11,76 +9,48 @@ import (
 )
 
 func main() {
-	// Read verification token from environment (same as your Node.js example)
-	verifyToken := os.Getenv("VERIFY_TOKEN")
-	if verifyToken == "" {
-		log.Fatal("VERIFY_TOKEN environment variable is not set")
-	}
-
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "3000"
+		port = "4040"
 	}
+	verifyToken := os.Getenv("VERIFY_TOKEN")
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			handleGet(w, r, verifyToken)
+			mode := r.URL.Query().Get("hub.mode")
+			challenge := r.URL.Query().Get("hub.challenge")
+			token := r.URL.Query().Get("hub.verify_token")
+
+			if mode == "subscribe" && token == verifyToken {
+				log.Println("WEBHOOK VERIFIED")
+		    w.Header().Set("Content-Type", "application/json")
+    		w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(challenge)
+			} else {
+				w.WriteHeader(http.StatusForbidden)
+			}
 
 		case http.MethodPost:
-			handlePost(w, r)
+			timestamp := time.Now().Format("2006-01-02 15:04:05")
+			log.Printf("\n\nWebhook received %s\n", timestamp)
+
+			var body map[string]interface{}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				log.Println("Error decoding JSON:", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			prettyBody, _ := json.MarshalIndent(body, "", "  ")
+			log.Println(string(prettyBody))
+			w.WriteHeader(http.StatusOK)
 
 		default:
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
 	})
 
-	log.Printf("Starting server on port %s...\n", port)
+	log.Printf("\nListening on port %s\n", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
-func handleGet(w http.ResponseWriter, r *http.Request, verifyToken string) {
-	mode := r.URL.Query().Get("hub.mode")
-	token := r.URL.Query().Get("hub.verify_token")
-	challenge := r.URL.Query().Get("hub.challenge")
-
-	if mode == "subscribe" && token == verifyToken {
-		log.Println("WEBHOOK VERIFIED")
-		w.WriteHeader(http.StatusOK)
-		w.Header().Set("Content-Type", "text/plain")
-		_, _ = w.Write([]byte(challenge))
-		return
-	}
-
-	w.WriteHeader(http.StatusForbidden)
-}
-
-func handlePost(w http.ResponseWriter, r *http.Request) {
-	timestamp := time.Now().Format("2006-01-02 15:04:05")
-
-	fmt.Printf("\n\nWebhook received %s\n", timestamp)
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		log.Printf("Error reading body: %v\n", err)
-		http.Error(w, "Bad request", http.StatusBadRequest)
-		return
-	}
-	defer r.Body.Close()
-
-	// Pretty print JSON
-	var prettyJSON interface{}
-	if err := json.Unmarshal(body, &prettyJSON); err != nil {
-		fmt.Println("Received non-JSON body:")
-		fmt.Println(string(body))
-	} else {
-		pretty, _ := json.MarshalIndent(prettyJSON, "", "  ")
-		fmt.Println(string(pretty))
-	}
-
-	// You can also log headers if needed
-	// log.Printf("Headers: %+v\n", r.Header)
-
-	// Always respond with 200 OK quickly (important for WhatsApp/Meta webhooks)
-	w.WriteHeader(http.StatusOK)
-}
