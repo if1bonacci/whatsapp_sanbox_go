@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func main() {
@@ -15,42 +17,44 @@ func main() {
 	}
 	verifyToken := os.Getenv("VERIFY_TOKEN")
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			mode := r.URL.Query().Get("hub.mode")
-			challenge := r.URL.Query().Get("hub.challenge")
-			token := r.URL.Query().Get("hub.verify_token")
+	r := chi.NewRouter()
 
-			if mode == "subscribe" && token == verifyToken {
-				log.Println("WEBHOOK VERIFIED")
-		    w.Header().Set("Content-Type", "application/json")
-    		w.WriteHeader(http.StatusOK)
-				json.NewEncoder(w).Encode(challenge)
-			} else {
-				w.WriteHeader(http.StatusForbidden)
-			}
+	// GET / - verification endpoint
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		mode := r.URL.Query().Get("hub.mode")
+		challenge := r.URL.Query().Get("hub.challenge")
+		token := r.URL.Query().Get("hub.verify_token")
 
-		case http.MethodPost:
-			timestamp := time.Now().Format("2006-01-02 15:04:05")
-			log.Printf("\n\nWebhook received %s\n", timestamp)
-
-			var body map[string]interface{}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				log.Println("Error decoding JSON:", err)
-				w.WriteHeader(http.StatusBadRequest)
+		if mode == "subscribe" && token == verifyToken {
+			log.Println("WEBHOOK VERIFIED")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			err := json.NewEncoder(w).Encode(challenge)
+			if err != nil {
 				return
 			}
-			prettyBody, _ := json.MarshalIndent(body, "", "  ")
-			log.Println(string(prettyBody))
-			w.WriteHeader(http.StatusOK)
-
-		default:
-			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
 		}
+
+		w.WriteHeader(http.StatusForbidden)
+	})
+
+	// POST / - webhook receiver
+	r.Post("/", func(w http.ResponseWriter, r *http.Request) {
+		timestamp := time.Now().Format("2006-01-02 15:04:05")
+		log.Printf("\n\nWebhook received %s\n", timestamp)
+
+		var body map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			log.Println("Error decoding JSON:", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		prettyBody, _ := json.MarshalIndent(body, "", "  ")
+		log.Println(string(prettyBody))
+		w.WriteHeader(http.StatusOK)
 	})
 
 	log.Printf("\nListening on port %s\n", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	log.Fatal(http.ListenAndServe(":"+port, r))
 }
-
